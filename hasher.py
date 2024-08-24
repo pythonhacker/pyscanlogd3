@@ -39,5 +39,6 @@ class HostHash:
     def __hash__(self):
         """ Return the hash """
 
-        return self.perform_hash(self.mix(self.src, self.dst, 0xffffff))
+        keys = sorted((self.src, self.dst))
+        return self.perform_hash(self.mix(keys[0],keys[1], 0xffffff))
 

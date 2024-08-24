@@ -26,15 +26,15 @@ TCP=dpkt.tcp.TCP
 UDP=dpkt.udp.UDP
 SCTP=dpkt.sctp.SCTP
 
-
 # Scan names
+# Ref: https://nmap.org/book/man-port-scanning-techniques.html
 TCP_NULL_SCAN='TCP Null'
 TCP_FIN_SCAN='TCP Fin'
 TCP_SYN_SCAN='TCP Syn'
 TCP_SYN_FIN_SCAN='TCP Syn/Fin'
 TCP_XMAS_SCAN='TCP Xmas'
 TCP_ACK_SCAN='TCP Ack'
-TCP_FIN_ACK_SCAN='TCP Fin/Ack'
+TCP_FIN_ACK_SCAN='TCP Fin/Ack (Maimon)'
 TCP_FULL_CONNECT_SCAN='TCP Full-Connect'
 TCP_ALL_FLAGS_SCAN='TCP All-Flags'
 TCP_IDLE_SCAN='TCP Idle'

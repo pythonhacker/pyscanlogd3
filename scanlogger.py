@@ -58,6 +58,7 @@ class ScanLogger:
     def __init__(self, timeout, threshold, itf=None, maxsize=8192,
                  daemon=True, ignore_duplicates=False, logfile='/var/log/pyscanlogd3.log'):
         self.scans = entry.EntryLog(maxsize)
+        self.maxsize = maxsize
         self.long_scans = entry.EntryLog(maxsize)
         # Port scan weight threshold
         self.threshold = threshold
@@ -92,7 +93,21 @@ class ScanLogger:
         # to maximum such entries possible in 60 sec - assuming
         # a scan occurs at most every 5 seconds, this would be 12.
         self.recent_scans = timerlist.TimerList(12, 60.0)
-        
+        self.status_report()
+
+    def status_report(self):
+        """ Report current configuration before starting """
+
+        if self.itf is None:
+            print('listening to default interface')
+        else:
+            print(f'listening to {self.itf}')
+        if self.ignore_dups:
+            print('duplicate scans will not be logged')
+        else:
+            print('duplicate scans will be logged')
+        print(f'config => threshold: {self.threshold}, timeout: {self.timeout}s, bufsize: {self.maxsize}')
+            
     def log(self, msg):
         """ Log a message to console and/or log file """
 
@@ -192,6 +207,8 @@ class ScanLogger:
 
             if scan.proto==TCP:
                 idle_scan = False
+                # NOTE: This implementation has bugs and often can return spurious
+                # idle scans where B may not even be reachable from A.
                 if scan.flags==TH_RST:
                     # None does scan using RST, however this could be
                     # return packets from a zombie host to the scanning
@@ -320,10 +337,12 @@ class ScanLogger:
             return
 
         ip = pkt.ip
+        payload = ip.data
+        
         # Ignore non-tcp, non-udp packets
-        if type(ip.data) not in (TCP, UDP, SCTP):
+        if type(payload) not in (TCP, UDP, SCTP):
             return
-
+        
         src,dst,dport,proto,flags = utils.unpack(ip)
         # hash it
         key = hash(hasher.HostHash(src, dst))
@@ -334,8 +353,8 @@ class ScanLogger:
             scan = self.scans[key]
 
             if scan.src != src:
-               # Skip packets in reverse direction or invalid protocol
-               return
+                # Skip packets in reverse direction or invalid protocol
+                return
 
             timediff = ts - scan.timestamp
             # Update only if not too old, else skip and remove entry
@@ -394,7 +413,7 @@ class ScanLogger:
                 return 
 
             if scan.logged: return
-                
+
             scan.timestamp = ts
             self.update_ports(scan, dport, flags)
             self.inspect_scan(scan)
@@ -407,7 +426,7 @@ class ScanLogger:
             scan.timestamp = ts
             scan.flags = flags
             if proto==SCTP:
-                scan.chunk_type = pload.chunks[0].type
+                scan.chunk_type = payload.chunks[0].type
             scan.ports.append(dport)
             scan.proto = proto
             # print(src, dst, dport, flags)

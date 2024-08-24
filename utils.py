@@ -28,4 +28,3 @@ def scan_ip2quad(scan):
     return map(ip2quad, (scan.src, scan.dst))
 
 
-
