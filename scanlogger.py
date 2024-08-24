@@ -60,6 +60,8 @@ class ScanLogger:
         self.long_scans = entry.EntryLog(maxsize)
         # Port scan weight threshold
         self.threshold = threshold
+        # Custom thresholds
+        self.custom_thresholds = {}
         # Timeout for scan entries
         self.timeout = timeout
         # Long-period scan timeouts
@@ -125,6 +127,10 @@ class ScanLogger:
             # Continuing an already detected scan
             tup = [scan.type, srcip,dstip, ports]
             if not scan.slow_scan:
+                # We dont want a continuing scan to log too many times
+                # so update the threshold for the scan's hash
+                custom_threshold = levelParams['max'][1]
+                self.custom_thresholds[scan.hash] = custom_threshold
                 if scan.type != TCP_IDLE_SCAN:
                     line = 'Continuing %s scan from %s to %s (ports:%s)'
                 else:
@@ -163,6 +169,10 @@ class ScanLogger:
         else:
             threshold = self.threshold
 
+        if scan.hash in self.custom_thresholds:
+            # Pick up custom threshold
+            threshold = self.custom_thresholds[scan.hash]
+            
         # print(threshold, scan.weight)
         # Sure scan
         is_scan = (scan.weight >= threshold)
@@ -293,9 +303,11 @@ class ScanLogger:
         else:
             return False
         
-    def process(self, ts, pkt):
+    def process(self, ts, pkt, decode=None):
         """ Process an incoming packet looking for scan signatures """
 
+        pkt = decode(pkt)
+        
         # Dont process non-IP packets
         if not 'ip' in pkt.__dict__:
             return
@@ -397,6 +409,7 @@ class ScanLogger:
             
     def loop(self):
         """ Run the main logic in a loop listening to packets """
+
         pc = pcap.pcap(name=self.itf, promisc=True, immediate=True, timeout_ms=500)        
         decode = { pcap.DLT_LOOP:dpkt.loopback.Loopback,
                    pcap.DLT_NULL:dpkt.loopback.Loopback,
@@ -404,9 +417,7 @@ class ScanLogger:
 
         try:
             print('listening on %s: %s' % (pc.name, pc.filter))
-            for ts, pkt in pc:
-                # print(ts, pkt)
-                self.process(ts, decode(pkt))
+            pc.loop(-1, self.process, decode)
         except KeyboardInterrupt:
             if not self.daemon:
                 nrecv, ndrop, nifdrop = pc.stats()
