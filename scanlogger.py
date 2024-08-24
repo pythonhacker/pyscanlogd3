@@ -21,7 +21,7 @@ import socket
 import time
 import argparse
 import hasher
-
+import utils
 import entry
 import timerlist
 from constants import *
@@ -34,10 +34,6 @@ levelParams = {
 }
 
 PIDFILE="/var/run/pyscanlogger.pid"
-
-get_timestamp = lambda : time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-ip2quad = lambda x: socket.inet_ntoa(struct.pack('I', x))
-scan_ip2quad = lambda scan: list(map(ip2quad, [scan.src, scan.dst]))
 
 class ScanLogger:
     """ Port scan detector and logger class """
@@ -91,7 +87,7 @@ class ScanLogger:
     def log(self, msg):
         """ Log a message to console and/or log file """
 
-        line = f'[{get_timestamp()}]: {msg}'
+        line = f'[{utils.timestamp()}]: {msg}'
         if self.scanlog:
             self.scanlog.write(line + '\n')
             self.scanlog.flush()
@@ -102,7 +98,7 @@ class ScanLogger:
     def log_scan(self, scan, continuation=False, slow_scan=False, unsure=False):
         """ Log the scan to file and/or console """
 
-        srcip, dstip = scan_ip2quad(scan)
+        srcip, dstip = utils.scan_ip2quad(scan)
         ports = ','.join([str(port) for port in scan.ports])
         
         if not continuation:
@@ -112,7 +108,7 @@ class ScanLogger:
                 if scan.type != 'Idle':
                     line = '%s scan (flags:%d) from %s to %s (ports:%s)'
                 else:
-                    tup.append(ip2quad(scan.zombie))
+                    tup.append(utils.ip2quad(scan.zombie))
                     line = '%s scan (flags: %d) from %s to %s (ports: %s) using zombie host %s'                    
             else:
                 tup.append(scan.time_avg)                    
@@ -126,7 +122,7 @@ class ScanLogger:
                 if scan.type != 'Idle':
                     line = 'Continuation of %s scan from %s to %s (ports:%s)'
                 else:
-                    tup.append(ip2quad(scan.zombie))
+                    tup.append(utils.ip2quad(scan.zombie))
                     line = 'Continuation of %s scan from %s to %s (ports: %s) using zombie host %s' 
             else:
                 tup.append(scan.time_avg)
@@ -223,7 +219,7 @@ class ScanLogger:
                             if not recent.is_scan: continue
                             if recent.type == 'TCP full-connect' and ((scan.src == recent.dst) and (scan.dst == recent.src)):
                                 # Spurious
-                                self.log("Ignoring spurious TCP full-connect scan from %s" % ' to '.join(scan_ip2quad(scan)))
+                                self.log("Ignoring spurious TCP full-connect scan from %s" % ' to '.join(utils.scan_ip2quad(scan)))
                                 not_scan = True
                                 break
 
@@ -234,7 +230,7 @@ class ScanLogger:
                         recent1 = self.recent_scans[-1:-2:-1]
                         for recent in recent1:
                             if recent.type=='Idle' and scan.src==recent.zombie:
-                                self.log('Ignoring mis-interpreted syn scan from zombie host %s' % ' to '.join(scan_ip2quad(scan)))
+                                self.log('Ignoring mis-interpreted syn scan from zombie host %s' % ' to '.join(utils.scan_ip2quad(scan)))
                                 break
                             # Reply from B->A for full-connect scan from A->B
                             elif (recent.type == 'reply' and ((scan.src == recent.dst) and (scan.dst == recent.src))):
