@@ -18,6 +18,12 @@ class ScanEntry(object):
         self.logged = False
         self.type = ''
         self.flags = 0
+        # Is this a slow scan
+        self.slow_scan = False
+        # If we are not sure of this scan
+        self.maybe = False
+        # Is this a duplicate (continuing) scan
+        self.duplicate = False
         # SCTP
         self.chunk_type = 0
         self.weight = 0

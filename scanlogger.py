@@ -99,17 +99,17 @@ class ScanLogger:
         if not self.daemon:
             print(line, file=sys.stderr)
         
-    def log_scan(self, scan, same_scan=False, slow_scan=False, unsure=False):
+    def log_scan(self, scan):
         """ Log the scan to file and/or console """
 
         srcip, dstip = utils.scan_ip2quad(scan)
         ports = ','.join([str(port) for port in scan.ports])
         
-        if not same_scan:
-            # New detected scan
+        if not scan.duplicate:
+            # Newly detected scan
             tup = [scan.type,scan.flags,srcip,dstip, ports]
             
-            if not slow_scan:
+            if not scan.slow_scan:
                 if scan.type != TCP_IDLE_SCAN:
                     line = '%s scan (flags:%d) from %s to %s (ports:%s)'
                 else:
@@ -117,14 +117,14 @@ class ScanLogger:
                     line = '%s scan (flags: %d) from %s to %s (ports: %s) using zombie host %s'                    
             else:
                 tup.append(scan.time_avg)                    
-                if unsure:
+                if scan.maybe:
                     line = 'Possible slow %s scan (flags:%d) from %s to %s (ports:%s), average timediff %.2fs'
                 else:
                     line = 'Slow %s scan (flags:%d) from %s to %s (ports:%s), average timediff %.2fs'                    
         else:
             # Continuing an already detected scan
             tup = [scan.type, srcip,dstip, ports]
-            if not slow_scan:
+            if not scan.slow_scan:
                 if scan.type != TCP_IDLE_SCAN:
                     line = 'Continuing %s scan from %s to %s (ports:%s)'
                 else:
@@ -260,7 +260,7 @@ class ScanLogger:
                     scan.type = 'SCTP Init'
                 elif scan.chunk_type==10:
                     scan.type = 'SCTP COOKIE_ECHO'                    
-                
+
             # See if this was logged recently
             flag = (not not_scan)
             scanentry = entry.RecentScanEntry(scan, flag)
@@ -274,8 +274,14 @@ class ScanLogger:
                 # to avoid too many continiued scan log lines
                 self.recent_scans.append(scanentry)
 
-            if not not_scan:
-                self.log_scan(scan, same_scan=same_scan, slow_scan=slow_scan, unsure=maybe_scan)
+            # We are updating the state on the scan entry
+            # itself
+            scan.slow_scan = slow_scan
+            scan.maybe = maybe_scan
+            scan.duplicate = same_scan
+            
+            if flag:
+                self.log_scan(scan)
                 
             # Remove entry
             if slow_scan:
