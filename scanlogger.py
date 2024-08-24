@@ -24,6 +24,7 @@ import hasher
 
 import entry
 import timerlist
+from constants import *
 
 # timeout and threshold params for various threshold levels
 levelParams = {
@@ -33,19 +34,6 @@ levelParams = {
 }
 
 PIDFILE="/var/run/pyscanlogger.pid"
-
-# TCP flag constants
-TH_URG=dpkt.tcp.TH_URG
-TH_ACK=dpkt.tcp.TH_ACK
-TH_PSH=dpkt.tcp.TH_PUSH
-TH_RST=dpkt.tcp.TH_RST
-TH_SYN=dpkt.tcp.TH_SYN
-TH_FIN=dpkt.tcp.TH_FIN
-
-# Protocols
-TCP=dpkt.tcp.TCP
-UDP=dpkt.udp.UDP
-SCTP=dpkt.sctp.SCTP
 
 get_timestamp = lambda : time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
 ip2quad = lambda x: socket.inet_ntoa(struct.pack('I', x))
