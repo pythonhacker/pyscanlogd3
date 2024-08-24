@@ -9,9 +9,8 @@ setup(name='pyscanlogd3',
       version=version,
       description="pyscanlogd3 is a port scan detection tool written in Python3",
       long_description="""\
-Pyscanlogd is a port scan detection tool written in pure Python. It can
-detect most fast port scans and even can detect port-scans of longer
-duration upto an hour. It can run as a daemon as well as in the foreground.
+Pyscanlogd3 is a port scan detection tool written in pure Python.
+It can detect most fast port scans using nmap.      
 """,
       # Get strings from http://pypi.python.org/pypi?%3Aaction=list_classifiers
       classifiers=[
@@ -33,10 +32,11 @@ duration upto an hour. It can run as a daemon as well as in the foreground.
       include_package_data = True,    # include everything in source control
       py_modules = ['scanlogger','timerlist','entry','utils','hasher','constants'],
       zip_safe=False,
-      entry_points="""
-      [console_scripts]
-        pyscanlogd3 = scanlogger:main
-      """,
+      scripts=['pyscanlogd3'],
+      #entry_points="""
+      #[console_scripts]
+      #  pyscanlogd3 = main:main
+      #""",
       install_requires = [
           'setuptools',
           'dpkt',

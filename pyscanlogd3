@@ -1,0 +1,3 @@
+#!/bin/bash
+# Entry point script
+sudo -H $(which python) scanlogger.py $* 

@@ -5,12 +5,15 @@ pyscanlogger: Port scan detector/logger tool, inspired
 by scanlogd {http://www.openwall.com/scanlogd} but with
 added ability to log slow port-scans.
 
+This is able to detect all standard TCP/UDP/SCTP scans
+documented in the nmap book - https://nmap.org/book/man-port-scanning-techniques.html .
+
 Features
 
 1. Detects all stealth (half-open) and full-connect scans.
-2. Detects Idle scan and logs it correctly using correlation!
-3. Detects SCTP scan.
-4. Detects slow port-scans also.
+2. Detects SCTP scan.
+3. Custom thresholding
+4. Ignore duplicate scans.
 
 """
 
@@ -20,6 +23,9 @@ import struct
 import socket
 import time
 import argparse
+import threading
+import multiprocessing as mp
+
 import hasher
 import utils
 import entry
@@ -34,9 +40,9 @@ levelParams = {
     'low': (1, 3)
 }
 
-PIDFILE="/var/run/pyscanlogger.pid"
+PIDFILE="/var/run/pyscanlogd3.pid"
 
-class ScanLogger:
+class ScanLogger(threading.Thread):
     """ Port scan detector and logger class """
     
     # TCP flags to scan type mapping
@@ -56,7 +62,7 @@ class ScanLogger:
                   TH_RST_ACK: TCP_REPLY} 
                   
     def __init__(self, timeout, threshold, itf=None, maxsize=8192,
-                 daemon=True, ignore_duplicates=False, logfile='/var/log/pyscanlogd3.log'):
+                 ignore_duplicates=False, logfile='/var/log/pyscanlogd3.log'):
         self.scans = entry.EntryLog(maxsize)
         self.maxsize = maxsize
         self.long_scans = entry.EntryLog(maxsize)
@@ -72,8 +78,6 @@ class ScanLogger:
         self.timeout_l = 3600
         # Long-period scan threshold
         self.threshold_l = self.threshold/2
-        # Daemonize ?
-        self.daemon = daemon
         # Interface
         self.itf = itf
         # Log file
@@ -94,7 +98,8 @@ class ScanLogger:
         # a scan occurs at most every 5 seconds, this would be 12.
         self.recent_scans = timerlist.TimerList(12, 60.0)
         self.status_report()
-
+        threading.Thread.__init__(self, None)
+        
     def status_report(self):
         """ Report current configuration before starting """
 
@@ -116,8 +121,7 @@ class ScanLogger:
             self.scanlog.write(line + '\n')
             self.scanlog.flush()
             
-        if not self.daemon:
-            print(line, file=sys.stderr)
+        print(line, file=sys.stderr)
         
     def log_scan(self, scan):
         """ Log the scan to file and/or console """
@@ -329,9 +333,6 @@ class ScanLogger:
         
     def process(self, ts, pkt, decode=None):
         """ Process an incoming packet looking for scan signatures """
-
-        pkt = decode(pkt)
-        
         # Dont process non-IP packets
         if not 'ip' in pkt.__dict__:
             return
@@ -432,7 +433,10 @@ class ScanLogger:
             # print(src, dst, dport, flags)
             # print(scan)
             self.scans[key] = scan
-            
+
+    def run(self):
+        self.loop()
+        
     def loop(self):
         """ Run the main logic in a loop listening to packets """
 
@@ -443,50 +447,15 @@ class ScanLogger:
 
         try:
             print('listening on %s: %s' % (pc.name, pc.filter))
-            pc.loop(-1, self.process, decode)
+            for ts, pkt in pc:
+                self.process(ts, decode(pkt))
         except KeyboardInterrupt:
-            if not self.daemon:
-                nrecv, ndrop, nifdrop = pc.stats()
-                print('\n%d packets received by filter' % nrecv)
-                print('%d packets dropped by kernel' % ndrop)
-
-    def run_daemon(self):
-        # Disconnect from tty
-        try:
-            pid = os.fork()
-            if pid>0:
-                sys.exit(0)
-        except OSError as e:
-            print("fork #1 failed", e, file=sys.stderr)
-            sys.exit(1)
-
-        os.setsid()
-        os.umask(0)
-
-        # Second fork
-        try:
-            pid = os.fork()
-            if pid>0:
-                open(PIDFILE,'w').write(str(pid))
-                sys.exit(0)
-        except OSError as e:
-            print("fork #2 failed", e, file=sys.stderr)
-            sys.exit(1)
-            
-        self.loop()
-        
-    def run(self):
-        # If dameon, then create a new thread and wait for it
-        if self.daemon:
-            print('Daemonizing...')
-            self.run_daemon()
-        else:
-            # Run in foreground
-            self.loop()
+            nrecv, ndrop, nifdrop = pc.stats()
+            print('\n%d packets received by filter' % nrecv)
+            print('%d packets dropped by kernel' % ndrop)
 
 def main():
     parser = argparse.ArgumentParser(prog='pyscanlogd3', description='pyscanlogd3: Python3 port-scan detection program')
-    parser.add_argument('-d', '--daemonize', help='Daemonize', action='store_true', default=False)
     parser.add_argument('-f', '--logfile',help='File to save logs to',default='/var/log/pyscanlogd3.log')
     parser.add_argument('-l','--level',default='medium', choices=levelParams.keys(),
                         help='Default threshold level for detection')
@@ -497,9 +466,8 @@ def main():
     
     timeout, threshold = levelParams[args.level]
     s=ScanLogger(timeout, threshold, itf=args.interface, maxsize=8192,
-                 daemon=args.daemonize, ignore_duplicates=args.ignore_duplicates,
-                 logfile=args.logfile)
-    s.run()
-    
+                 ignore_duplicates=args.ignore_duplicates, logfile=args.logfile)
+    s.start()
+        
 if __name__ == '__main__':
     main()
