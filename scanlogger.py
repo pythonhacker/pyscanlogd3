@@ -281,12 +281,7 @@ class ScanLogger:
         if type(ip.data) not in (TCP, UDP, SCTP):
             return
 
-        pload = ip.data
-        src,dst,dport,flags = int(struct.unpack('I',ip.src)[0]),int(struct.unpack('I', ip.dst)[0]),int(pload.dport),0
-        # print(src, dst, dport, flags)
-        proto = type(pload)
-        
-        if proto == TCP: flags = pload.flags
+        src,dst,dport,proto,flags = utils.unpack(ip)
         # hash it
         key = hash(hasher.HostHash(src, dst))
         # Keep dropping old entries
