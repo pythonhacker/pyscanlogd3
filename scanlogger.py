@@ -55,11 +55,14 @@ class ScanLogger:
                   # Not a scan
                   TH_RST_ACK: TCP_REPLY} 
                   
-    def __init__(self, timeout, threshold, itf=None, maxsize=8192, daemon=True, logfile='/var/log/scanlog'):
+    def __init__(self, timeout, threshold, itf=None, maxsize=8192,
+                 daemon=True, ignore_duplicates=False, logfile='/var/log/pyscanlogd3.log'):
         self.scans = entry.EntryLog(maxsize)
         self.long_scans = entry.EntryLog(maxsize)
         # Port scan weight threshold
         self.threshold = threshold
+        # Ignore duplicate (continuing) scans ?
+        self.ignore_dups = ignore_duplicates
         # Custom thresholds
         self.custom_thresholds = {}
         # Timeout for scan entries
@@ -124,6 +127,10 @@ class ScanLogger:
                 else:
                     line = 'Slow %s scan (flags:%d) from %s to %s (ports:%s), average timediff %.2fs'                    
         else:
+            if self.ignore_dups:
+                # Not logging continued/duplicate scans
+                return
+            
             # Continuing an already detected scan
             tup = [scan.type, srcip,dstip, ports]
             if not scan.slow_scan:
@@ -459,16 +466,20 @@ class ScanLogger:
             self.loop()
 
 def main():
-    parser = argparse.ArgumentParser(prog='pyscanlogd3', description='pyscanlogd3: port-scan detection program')
+    parser = argparse.ArgumentParser(prog='pyscanlogd3', description='pyscanlogd3: Python3 port-scan detection program')
     parser.add_argument('-d', '--daemonize', help='Daemonize', action='store_true', default=False)
-    parser.add_argument('-f', '--logfile',help='File to save logs to',default='/var/log/scanlog')
+    parser.add_argument('-f', '--logfile',help='File to save logs to',default='/var/log/pyscanlogd3.log')
     parser.add_argument('-l','--level',default='medium', choices=levelParams.keys(),
                         help='Default threshold level for detection')
     parser.add_argument('-i','--interface',help='The network interface to listen to')
+    parser.add_argument('-I','--ignore_duplicates',help='Ignore continued (duplicate) scans',
+                        action='store_true', default=False)
     args = parser.parse_args()
+    
     timeout, threshold = levelParams[args.level]
     s=ScanLogger(timeout, threshold, itf=args.interface, maxsize=8192,
-                 daemon=args.daemonize, logfile=args.logfile)
+                 daemon=args.daemonize, ignore_duplicates=args.ignore_duplicates,
+                 logfile=args.logfile)
     s.run()
     
 if __name__ == '__main__':
