@@ -28,6 +28,7 @@ from constants import *
 
 # timeout and threshold params for various threshold levels
 levelParams = {
+    'max': (10, 50),
     'high': (10, 25),
     'medium': (5, 8),
     'low': (1, 3)
@@ -39,21 +40,22 @@ class ScanLogger:
     """ Port scan detector and logger class """
     
     # TCP flags to scan type mapping
-    scan_types = {0: 'TCP null',
-                  TH_FIN: 'TCP fin',
-                  TH_SYN: 'TCP syn', TH_SYN|TH_RST: 'TCP syn',
-                  TH_ACK: 'TCP ack',
-                  TH_URG|TH_PSH|TH_FIN: 'TCP x-mas',
-                  TH_URG|TH_PSH|TH_FIN|TH_ACK: 'TCP x-mas',
-                  TH_SYN|TH_FIN: 'TCP syn/fin',
-                  TH_FIN|TH_ACK: 'TCP fin/ack',
-                  TH_SYN|TH_ACK: 'TCP full-connect',
-                  TH_URG|TH_PSH|TH_ACK|TH_RST|TH_SYN|TH_FIN: 'TCP all-flags',
-                  TH_SYN|TH_ACK|TH_RST: 'TCP full-connect',                                    
+    scan_types = {0: TCP_NULL_SCAN,
+                  TH_FIN: TCP_FIN_SCAN,
+                  TH_SYN: TCP_SYN_SCAN,
+                  TH_SYN_RST: TCP_SYN_SCAN,
+                  TH_ACK: TCP_ACK_SCAN,
+                  TH_URG_PSH_FIN: TCP_XMAS_SCAN,
+                  TH_URG_PSH_FIN_ACK: TCP_XMAS_SCAN,
+                  TH_SYN_FIN: TCP_SYN_FIN_SCAN,
+                  TH_FIN_ACK: TCP_FIN_ACK_SCAN,
+                  TH_SYN_ACK: TCP_FULL_CONNECT_SCAN,
+                  TH_ALL_FLAGS: TCP_ALL_FLAGS_SCAN,
+                  TH_SYN_ACK_RST: TCP_FULL_CONNECT_SCAN,                                    
                   # Not a scan
-                  TH_RST|TH_ACK: 'reply'} 
+                  TH_RST_ACK: TCP_REPLY} 
                   
-    def __init__(self, timeout, threshold, maxsize=8192, daemon=True, logfile='/var/log/scanlog'):
+    def __init__(self, timeout, threshold, itf=None, maxsize=8192, daemon=True, logfile='/var/log/scanlog'):
         self.scans = entry.EntryLog(maxsize)
         self.long_scans = entry.EntryLog(maxsize)
         # Port scan weight threshold
@@ -66,6 +68,8 @@ class ScanLogger:
         self.threshold_l = self.threshold/2
         # Daemonize ?
         self.daemon = daemon
+        # Interface
+        self.itf = itf
         # Log file
         try:
             self.scanlog = open(logfile,'a')
@@ -95,17 +99,18 @@ class ScanLogger:
         if not self.daemon:
             print(line, file=sys.stderr)
         
-    def log_scan(self, scan, continuation=False, slow_scan=False, unsure=False):
+    def log_scan(self, scan, same_scan=False, slow_scan=False, unsure=False):
         """ Log the scan to file and/or console """
 
         srcip, dstip = utils.scan_ip2quad(scan)
         ports = ','.join([str(port) for port in scan.ports])
         
-        if not continuation:
-            tup = [scan.type,scan.flags_or,srcip,dstip, ports]
+        if not same_scan:
+            # New detected scan
+            tup = [scan.type,scan.flags,srcip,dstip, ports]
             
             if not slow_scan:
-                if scan.type != 'Idle':
+                if scan.type != TCP_IDLE_SCAN:
                     line = '%s scan (flags:%d) from %s to %s (ports:%s)'
                 else:
                     tup.append(utils.ip2quad(scan.zombie))
@@ -117,16 +122,17 @@ class ScanLogger:
                 else:
                     line = 'Slow %s scan (flags:%d) from %s to %s (ports:%s), average timediff %.2fs'                    
         else:
+            # Continuing an already detected scan
             tup = [scan.type, srcip,dstip, ports]
             if not slow_scan:
-                if scan.type != 'Idle':
-                    line = 'Continuation of %s scan from %s to %s (ports:%s)'
+                if scan.type != TCP_IDLE_SCAN:
+                    line = 'Continuing %s scan from %s to %s (ports:%s)'
                 else:
                     tup.append(utils.ip2quad(scan.zombie))
-                    line = 'Continuation of %s scan from %s to %s (ports: %s) using zombie host %s' 
+                    line = 'Continuing %s scan from %s to %s (ports: %s) using zombie host %s' 
             else:
                 tup.append(scan.time_avg)
-                line = 'Continuation of slow %s scan from %s to %s (ports:%s), average timediff %.2fs'                
+                line = 'Continuing slow %s scan from %s to %s (ports:%s), average timediff %.2fs'                
 
         msg = line % tuple(tup)
         self.log(msg)
@@ -134,7 +140,7 @@ class ScanLogger:
     def update_ports(self, scan, dport, flags):
         """ Update weight of scan using the port """
         
-        scan.flags_or |= flags
+        scan.flags = flags
 
         # Already in ports list, don't update weight
         if dport in scan.ports:
@@ -150,11 +156,18 @@ class ScanLogger:
 
     def inspect_scan(self, scan, slow_scan=False):
         """ Check if the given scan is a valid one """
-        
+
+        # If scan is logged, use scan's threshold if set
+        if slow_scan:
+            threshold = self.threshold_l
+        else:
+            threshold = self.threshold
+
+        # print(threshold, scan.weight)
         # Sure scan
-        is_scan = ((slow_scan and scan.weight >= self.threshold_l) or (not slow_scan and scan.weight >= self.threshold))
+        is_scan = (scan.weight >= threshold)
         # Possible scan
-        maybe_scan = (slow_scan and len(scan.ports)>=3 and len(scan.timediffs)>=4 and (scan.weight < self.threshold_l))
+        maybe_scan = (slow_scan and len(scan.ports)>=3 and len(scan.timediffs)>=4 and (scan.weight < threshold))
         not_scan = False
         
         if is_scan or maybe_scan:
@@ -162,7 +175,7 @@ class ScanLogger:
 
             if scan.proto==TCP:
                 idle_scan = False
-                if scan.flags_or==TH_RST:
+                if scan.flags==TH_RST:
                     # None does scan using RST, however this could be
                     # return packets from a zombie host to the scanning
                     # host when a scanning host is doing an idle scan.
@@ -179,11 +192,12 @@ class ScanLogger:
                     # See if there was a SYN scan recently from host
                     # X to host Z. Then actually Y is idle scanning
                     # Z
+                    # Ref: https://nmap.org/book/idlescan.html
                     dummy_scans, idle_ports = [], []
 
                     for item in reversed(self.recent_scans):
                         rscan = item[1]
-                        if rscan.src==scan.src and rscan.flags_or==TH_SYN and ((rscan.timestamp - scan.timestamp)<30):
+                        if rscan.src==scan.src and rscan.flags==TH_SYN and ((rscan.timestamp - scan.timestamp)<30):
                             idle_scan = True
                             idle_ports.append(rscan.ports)
                             dummy_scans.append(item)
@@ -192,7 +206,7 @@ class ScanLogger:
                         scan.src = scan.dst
                         scan.dst = rscan.dst
                         scan.zombie = rscan.src
-                        scan.type = 'Idle'
+                        scan.type = TCP_IDLE_SCAN
                         scan.ports = idle_ports
                         # for d in dummy_scans:
                         #    self.recent_scans.remove(d)
@@ -205,19 +219,19 @@ class ScanLogger:
                         
                         return False
                 else:
-                    scan.type = self.scan_types.get(scan.flags_or,'unknown')
-                    if scan.type in ('', 'reply'):
+                    scan.type = self.scan_types.get(scan.flags,'unknown')
+                    if scan.type in ('', TCP_REPLY):
                         not_scan = True
 
                     # If we see scan flags 22 from A->B, make sure that
                     # there was no recent full-connect scan from B->A, if
                     # so this is spurious and should be ignored.
-                    if scan.flags_or == (TH_SYN|TH_ACK|TH_RST) and len(self.recent_scans):
+                    if scan.flags == TH_SYN_ACK_RST and len(self.recent_scans):
                         recent1 = self.recent_scans[-1:-2:-1]
                         for recent in recent1:
                             # Was not a scan, skip
                             if not recent.is_scan: continue
-                            if recent.type == 'TCP full-connect' and ((scan.src == recent.dst) and (scan.dst == recent.src)):
+                            if recent.type == TCP_FULL_CONNECT_SCAN and ((scan.src == recent.dst) and (scan.dst == recent.src)):
                                 # Spurious
                                 self.log("Ignoring spurious TCP full-connect scan from %s" % ' to '.join(utils.scan_ip2quad(scan)))
                                 not_scan = True
@@ -225,22 +239,22 @@ class ScanLogger:
 
                     # If this is a syn scan, see if there was a recent idle scan
                     # with this as zombie, then ignore it...
-                    elif scan.flags_or == TH_SYN and len(self.recent_scans):
+                    elif scan.flags == TH_SYN and len(self.recent_scans):
                         # Try last 1 scans
                         recent1 = self.recent_scans[-1:-2:-1]
                         for recent in recent1:
-                            if recent.type=='Idle' and scan.src==recent.zombie:
+                            if recent.type==TCP_IDLE_SCAN and scan.src==recent.zombie:
                                 self.log('Ignoring mis-interpreted syn scan from zombie host %s' % ' to '.join(utils.scan_ip2quad(scan)))
                                 break
                             # Reply from B->A for full-connect scan from A->B
-                            elif (recent.type == 'reply' and ((scan.src == recent.dst) and (scan.dst == recent.src))):
-                                scan.type = 'TCP full-connect'
+                            elif (recent.type == TCP_REPLY and ((scan.src == recent.dst) and (scan.dst == recent.src))):
+                                scan.type = TCP_FULL_CONNECT_SCAN
                                 break
                             
             elif scan.proto==UDP:
                 scan.type = 'UDP'
                 # Reset flags for UDP scan
-                scan.flags_or = 0
+                scan.flags = 0
             elif scan.proto==SCTP:
                 if scan.chunk_type==1:
                     scan.type = 'SCTP Init'
@@ -248,16 +262,20 @@ class ScanLogger:
                     scan.type = 'SCTP COOKIE_ECHO'                    
                 
             # See if this was logged recently
-            scanentry = entry.RecentScanEntry(scan, not not_scan)
-
-            if scanentry not in self.recent_scans:
-                continuation=False
-                self.recent_scans.append(scanentry)
+            flag = (not not_scan)
+            scanentry = entry.RecentScanEntry(scan, flag)
+            
+            # Detecting a continuing scan
+            same_scan=False
+            if scanentry in self.recent_scans:
+                same_scan=True
             else:
-                continuation=True
+                # Seet custom threshold as peak one
+                # to avoid too many continiued scan log lines
+                self.recent_scans.append(scanentry)
 
             if not not_scan:
-                self.log_scan(scan, continuation=continuation, slow_scan=slow_scan, unsure=maybe_scan)
+                self.log_scan(scan, same_scan=same_scan, slow_scan=slow_scan, unsure=maybe_scan)
                 
             # Remove entry
             if slow_scan:
@@ -309,14 +327,18 @@ class ScanLogger:
                         lscan.dst = dst
                         lscan.timestamp = ts
                         lscan.timediffs.append(ts - prev)
-                        lscan.flags_or |= flags
+                        # Do the OR flags for long scans
+                        # for time being
+                        lscan.flags |= flags
                         lscan.ports.append(dport)
                         lscan.proto = proto
                         self.long_scans[key] = lscan
                     else:
                         lscan = self.long_scans[key]
                         lscan.timestamp = ts
-                        lscan.flags_or |= flags
+                        # Do the OR flags for long scans
+                        # for time being
+                        lscan.flags |= flags
                         lscan.timediffs.append(ts - prev)
                         lscan.update_time_sd()
                         self.update_ports(lscan, dport, flags)
@@ -358,17 +380,18 @@ class ScanLogger:
             scan.src = src
             scan.dst = dst
             scan.timestamp = ts
-            scan.flags_or |= flags
+            scan.flags = flags
             if proto==SCTP:
                 scan.chunk_type = pload.chunks[0].type
             scan.ports.append(dport)
             scan.proto = proto
+            # print(src, dst, dport, flags)
             # print(scan)
             self.scans[key] = scan
             
     def loop(self):
         """ Run the main logic in a loop listening to packets """
-        pc = pcap.pcap(name=None, promisc=True, immediate=True, timeout_ms=500)        
+        pc = pcap.pcap(name=self.itf, promisc=True, immediate=True, timeout_ms=500)        
         decode = { pcap.DLT_LOOP:dpkt.loopback.Loopback,
                    pcap.DLT_NULL:dpkt.loopback.Loopback,
                    pcap.DLT_EN10MB:dpkt.ethernet.Ethernet } [pc.datalink()]
@@ -424,9 +447,11 @@ def main():
     parser.add_argument('-f', '--logfile',help='File to save logs to',default='/var/log/scanlog')
     parser.add_argument('-l','--level',default='medium', choices=levelParams.keys(),
                         help='Default threshold level for detection')
+    parser.add_argument('-i','--interface',help='The network interface to listen to')
     args = parser.parse_args()
     timeout, threshold = levelParams[args.level]
-    s=ScanLogger(timeout, threshold, 8192, args.daemonize, args.logfile)
+    s=ScanLogger(timeout, threshold, itf=args.interface, maxsize=8192,
+                 daemon=args.daemonize, logfile=args.logfile)
     s.run()
     
 if __name__ == '__main__':

@@ -17,7 +17,7 @@ class ScanEntry(object):
         self.time_sd = 0.0
         self.logged = False
         self.type = ''
-        self.flags_or = 0
+        self.flags = 0
         # SCTP
         self.chunk_type = 0
         self.weight = 0
@@ -76,10 +76,12 @@ class RecentScanEntry(object):
         self.dst = scan.dst
         self.zombie = scan.zombie
         self.type = scan.type
-        self.flags_or = scan.flags_or
+        self.flags = scan.flags
         self.ports = scan.ports[:]
         self.timestamp = scan.timestamp
         self.is_scan = is_scan
+        # Custom threshold
+        self.threshold = 0
 
     def __eq__(self, entry):
         return ((self.src==entry.src) and (self.dst==entry.dst) and \
