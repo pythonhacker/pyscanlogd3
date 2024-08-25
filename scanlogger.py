@@ -12,7 +12,7 @@ Features
 
 1. Detects all stealth (half-open) and full-connect scans.
 2. Detects SCTP scan.
-3. Custom thresholding
+3. Custom thresholding.
 4. Ignore duplicate scans.
 
 """
@@ -25,7 +25,9 @@ import time
 import argparse
 import threading
 import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 
+import db
 import hasher
 import utils
 import entry
@@ -42,7 +44,7 @@ levelParams = {
 
 PIDFILE="/var/run/pyscanlogd3.pid"
 
-class ScanLogger(threading.Thread):
+class ScanLogger:
     """ Port scan detector and logger class """
     
     # TCP flags to scan type mapping
@@ -78,7 +80,7 @@ class ScanLogger(threading.Thread):
         self.timeout_l = 3600
         # Long-period scan threshold
         self.threshold_l = self.threshold/2
-        # Interface
+        # Interface(s) - this is a list
         self.itf = itf
         # Log file
         try:
@@ -88,7 +90,9 @@ class ScanLogger(threading.Thread):
             (errno, strerror) = ex.args
             print("Error opening scan log file %s => %s" % (logfile, strerror), file=sys.stderr)
             self.scanlog = None
-            
+
+        # Database path
+        self.dbpath = None
         # Recent scans - this list allows to keep scan information
         # upto last 'n' seconds, so as to not call duplicate scans
         # in the same time-period. 'n' is 60 sec by default.
@@ -98,7 +102,6 @@ class ScanLogger(threading.Thread):
         # a scan occurs at most every 5 seconds, this would be 12.
         self.recent_scans = timerlist.TimerList(12, 60.0)
         self.status_report()
-        threading.Thread.__init__(self, None)
         
     def status_report(self):
         """ Report current configuration before starting """
@@ -128,7 +131,7 @@ class ScanLogger(threading.Thread):
 
         srcip, dstip = utils.scan_ip2quad(scan)
         zombie_host = utils.ip2quad(scan.zombie)
-        ports = ','.join([str(port) for port in scan.ports])
+        ports = ','.join([str(port) for port in sorted(scan.ports)])
         template = '{type} scan (flags:{flags}) from {srcip} to {dstip} (ports: {ports})'
         line = ''
         
@@ -211,52 +214,14 @@ class ScanLogger(threading.Thread):
             scan.logged = True
 
             if scan.proto==TCP:
-                idle_scan = False
-                # NOTE: This implementation has bugs and often can return spurious
-                # idle scans where B may not even be reachable from A.
                 if scan.flags==TH_RST:
-                    # None does scan using RST, however this could be
-                    # return packets from a zombie host to the scanning
-                    # host when a scanning host is doing an idle scan.
-                    # Basically
-                    # A -scanning host
-                    # B - zombie host
-                    # C - target host
-
-                    # If A does an idle scan on C with B as zombie,
-                    # it will appear to C as if B is syn scanning it
-                    # and later we could get an apparent RST "scan"
-                    # from B to A 
-                    # Correlation: If 'RST scan' detected from X to Y
-                    # See if there was a SYN scan recently from host
-                    # X to host Z. Then actually Y is idle scanning
-                    # Z
-                    # Ref: https://nmap.org/book/idlescan.html
-                    dummy_scans, idle_ports = [], []
-
-                    for item in reversed(self.recent_scans):
-                        rscan = item[1]
-                        if rscan.src==scan.src and rscan.flags==TH_SYN and ((rscan.timestamp - scan.timestamp)<30):
-                            idle_scan = True
-                            idle_ports.append(rscan.ports)
-                            dummy_scans.append(item)
-                            
-                    if idle_scan:
-                        scan.src = scan.dst
-                        scan.dst = rscan.dst
-                        scan.zombie = rscan.src
-                        scan.type = TCP_IDLE_SCAN
-                        scan.ports = idle_ports
-                        # for d in dummy_scans:
-                        #    self.recent_scans.remove(d)
+                    # Remove entry
+                    if slow_scan:
+                        del self.long_scans[scan.hash]
                     else:
-                        # Remove entry
-                        if slow_scan:
-                            del self.long_scans[scan.hash]
-                        else:
-                            del self.scans[scan.hash]
+                        del self.scans[scan.hash]
                         
-                        return False
+                    return False
                 else:
                     scan.type = self.scan_types.get(scan.flags,'unknown')
                     if scan.type in ('', TCP_REPLY):
@@ -320,6 +285,8 @@ class ScanLogger(threading.Thread):
             scan.duplicate = same_scan
             
             if flag:
+                # Save to db
+                db.insert(scan, self.dbpath)
                 self.log_scan(scan)
                 
             # Remove entry
@@ -340,7 +307,6 @@ class ScanLogger(threading.Thread):
 
         ip = pkt.ip
         payload = ip.data
-        
         # Ignore non-tcp, non-udp packets
         if type(payload) not in (TCP, UDP, SCTP):
             return
@@ -350,6 +316,7 @@ class ScanLogger(threading.Thread):
         key = hash(hasher.HostHash(src, dst))
         # Keep dropping old entries
         self.recent_scans.collect()
+        # print (src, dst, dport, proto, ts, flags)
         
         if key in self.scans:
             scan = self.scans[key]
@@ -436,12 +403,30 @@ class ScanLogger(threading.Thread):
             self.scans[key] = scan
 
     def run(self):
-        self.loop()
+        """ Main entry point """
+
+        # Create scan db
+        self.dbpath = db.create()
         
-    def loop(self):
+        procs = []
+        for itf in self.itf:
+            p=mp.Process(target=self.loop, args=(itf,))
+            procs.append(p)
+
+        for p in procs:
+            p.start()
+
+        for i,p in enumerate(procs):
+            try:
+                p.join()
+            except KeyboardInterrupt as ex:
+                if i<len(procs)-1:
+                    print('Press Ctrl-C again to exit')
+            
+    def loop(self, itf):
         """ Run the main logic in a loop listening to packets """
 
-        pc = pcap.pcap(name=self.itf, promisc=True, immediate=True, timeout_ms=500)        
+        pc = pcap.pcap(name=itf, promisc=True, immediate=True, timeout_ms=500)        
         decode = { pcap.DLT_LOOP:dpkt.loopback.Loopback,
                    pcap.DLT_NULL:dpkt.loopback.Loopback,
                    pcap.DLT_EN10MB:dpkt.ethernet.Ethernet } [pc.datalink()]
@@ -452,15 +437,16 @@ class ScanLogger(threading.Thread):
                 self.process(ts, decode(pkt))
         except KeyboardInterrupt:
             nrecv, ndrop, nifdrop = pc.stats()
+            print('stats for network interface:',itf)
             print('\n%d packets received by filter' % nrecv)
             print('%d packets dropped by kernel' % ndrop)
-
+            
 def main():
     parser = argparse.ArgumentParser(prog='pyscanlogd3', description='pyscanlogd3: Python3 port-scan detection program')
     parser.add_argument('-f', '--logfile',help='File to save logs to',default='/var/log/pyscanlogd3.log')
     parser.add_argument('-l','--level',default='medium', choices=levelParams.keys(),
                         help='Default threshold level for detection')
-    parser.add_argument('-i','--interface',help='The network interface to listen to')
+    parser.add_argument('-i','--interface',help='The network interface(s) to listen to', default=[None], nargs='*')
     parser.add_argument('-I','--ignore_duplicates',help='Ignore continued (duplicate) scans',
                         action='store_true', default=False)
     args = parser.parse_args()
@@ -468,7 +454,7 @@ def main():
     timeout, threshold = levelParams[args.level]
     s=ScanLogger(timeout, threshold, itf=args.interface, maxsize=8192,
                  ignore_duplicates=args.ignore_duplicates, logfile=args.logfile)
-    s.start()
+    s.run()
         
 if __name__ == '__main__':
     main()
