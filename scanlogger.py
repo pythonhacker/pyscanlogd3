@@ -127,24 +127,24 @@ class ScanLogger(threading.Thread):
         """ Log the scan to file and/or console """
 
         srcip, dstip = utils.scan_ip2quad(scan)
+        zombie_host = utils.ip2quad(scan.zombie)
         ports = ','.join([str(port) for port in scan.ports])
+        template = '{type} scan (flags:{flags}) from {srcip} to {dstip} (ports: {ports})'
+        line = ''
         
         if not scan.duplicate:
             # Newly detected scan
-            tup = [scan.type,scan.flags,srcip,dstip, ports]
-            
             if not scan.slow_scan:
                 if scan.type != TCP_IDLE_SCAN:
-                    line = '%s scan (flags:%d) from %s to %s (ports:%s)'
+                    line = template
                 else:
-                    tup.append(utils.ip2quad(scan.zombie))
-                    line = '%s scan (flags: %d) from %s to %s (ports: %s) using zombie host %s'                    
+                    line = template + ' using zombie host {zombie_host}'
             else:
-                tup.append(scan.time_avg)                    
+                # tup.append(scan.time_avg)                    
                 if scan.maybe:
-                    line = 'Possible slow %s scan (flags:%d) from %s to %s (ports:%s), average timediff %.2fs'
+                    line = 'Possible slow ' + template + ', mean timediff: {time_avg:.2f}s'
                 else:
-                    line = 'Slow %s scan (flags:%d) from %s to %s (ports:%s), average timediff %.2fs'                    
+                    line = 'Slow ' + template + ', mean timediff: {time_avg:.2f}s'
         else:
             if self.ignore_dups:
                 # Not logging continued/duplicate scans
@@ -158,15 +158,16 @@ class ScanLogger(threading.Thread):
                 custom_threshold = levelParams['max'][1]
                 self.custom_thresholds[scan.hash] = custom_threshold
                 if scan.type != TCP_IDLE_SCAN:
-                    line = 'Continuing %s scan from %s to %s (ports:%s)'
+                    line = 'Continuing ' + template
                 else:
-                    tup.append(utils.ip2quad(scan.zombie))
-                    line = 'Continuing %s scan from %s to %s (ports: %s) using zombie host %s' 
+                    line = 'Continuing ' + template + ' using zombie host {zombie_host}'
             else:
-                tup.append(scan.time_avg)
-                line = 'Continuing slow %s scan from %s to %s (ports:%s), average timediff %.2fs'                
+                line = 'Continuing slow ' + template + ', mean timediff: {time_avg:.2f}s'
 
-        msg = line % tuple(tup)
+        # Context dictionary
+        context_dict = locals()
+        context_dict.update(scan.__dict__)
+        msg = line.format(**context_dict)
         self.log(msg)
 
     def update_ports(self, scan, dport, flags):
