@@ -154,7 +154,6 @@ class ScanLogger:
                 return
             
             # Continuing an already detected scan
-            tup = [scan.type, srcip,dstip, ports]
             if not scan.slow_scan:
                 # We dont want a continuing scan to log too many times
                 # so update the threshold for the scan's hash
@@ -223,7 +222,7 @@ class ScanLogger:
                         
                     return False
                 else:
-                    scan.type = self.scan_types.get(scan.flags,'unknown')
+                    scan.type = self.scan_types.get(scan.flags,'')
                     if scan.type in ('', TCP_REPLY):
                         not_scan = True
 
@@ -312,6 +311,10 @@ class ScanLogger:
             return
         
         src,dst,dport,proto,flags = utils.unpack(ip)
+        # For time being, ignore where src = dst
+        if src == dst:
+            return
+        
         # hash it
         key = hash(hasher.HostHash(src, dst))
         # Keep dropping old entries
