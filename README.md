@@ -115,6 +115,8 @@ Do another scan, this time an `ACK` scan.
 
 Let us do a UDP scan now.
 
+	$ sudo nmap -sU nmap.org
+	
 	[2024-08-25 19:39:12]: UDP scan (flags:0) from 192.168.1.6 to 50.116.1.184 (ports: [36893, 40708, 5355, 20848, 8000, 43514, 215 68, 1434, 20164, 17824, 20154, 34555, 19017, 1900, 17487, 49158, 20560, 25337, 623, 20004, 997, 51972, 40539, 21333, 20, 45928,  1035, 49194, 177, 19161, 443, 50919, 30656, 43824, 16786, 34570, 33459, 518, 30718])
 
 Scans are also logged to the scan db. By default this is created at `/root/.config/pyscanlogd3/scan.db` .
