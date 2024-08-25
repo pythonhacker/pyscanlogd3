@@ -1,6 +1,6 @@
 # About
 pyscanlog3 (*py-scan-log-dee-three*) is a port scanning detection and logging tool written in Python3.
-It is derived from the original pyscanlogd - {https://github.com/pythonhacker/pyscanlogd} which only
+It is derived from the original pyscanlogd - https://github.com/pythonhacker/pyscanlogd which only
 supports Python2.
 
 The tool is able to detect vertical port scans. In other words, if any scanning tool performs
