@@ -131,7 +131,7 @@ You can inspect the scans by opening the db.
 	TCP Null
 	UDP
 	# Show all distinct scans originating from 192.168.1.6 grouped by scan hash and type
-	sqlite> select src,dst,type,hash,timestamp,utc_timestamp from scan group by hash,type;
+	sqlite> select src,dst,type,hash,timestamp,utc_timestamp from scan where src='192.168.1.6' group by hash,type;
 	192.168.1.6|50.116.1.184|TCP Ack|3654|1724594885.92384|2024-08-25 14:08:05
 	192.168.1.6|50.116.1.184|TCP Null|3654|1724594941.4765|2024-08-25 14:09:01
 	192.168.1.6|50.116.1.184|TCP Xmas|3654|1724594774.34435|2024-08-25 14:06:14
