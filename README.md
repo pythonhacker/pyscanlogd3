@@ -64,7 +64,10 @@ For detailed command line options,
 							The network interface(s) to listen to
 	  -I, --ignore_duplicates
 							Ignore continued (duplicate) scans
-
+	  -q --quiet
+                            Be quiet, no scans are logged to console,
+							only to the logfile.
+							
 To listen to more than one interface, pass them to the `-i` option.
 
 	$ pyscanlogd3 -i wlp0s20f3 lo
@@ -138,6 +141,13 @@ You can inspect the scans by opening the db.
 	192.168.1.6|50.116.1.184|UDP|3654|1724594952.29163|2024-08-25 14:09:12
 
 NOTE: The tool right now ignores scans where src and dst IPs are the same. 
+
+Scans are also logged to a log file, by default `/var/log/pyscalogd3.log`. You can tail the file to see the logs.
+
+	$ sudo tail -f /var/log/
+	[2024-09-01 19:58:36]: TCP Syn scan (flags:2) from 192.168.1.6 to 142.250.183.110 (ports: 80,143,199,443,8888)
+	[2024-09-01 19:58:36]: Continuing TCP Syn scan (flags:2) from 192.168.1.6 to 142.250.183.110 (ports: 23,110,445,1025,3389)
+
 
 # Slow scan detection
 

@@ -31,7 +31,7 @@ import db
 import hasher
 import utils
 import entry
-import timerlist
+import timedlist
 from constants import *
 
 # timeout and threshold params for various threshold levels
@@ -42,7 +42,7 @@ levelParams = {
     'low': (1, 3)
 }
 
-PIDFILE="/var/run/pyscanlogd3.pid"
+ERROR_RUNNING='pyscanlogd3: a process with pid {pid} is already running, kill the process or remove the file {PIDFILE} before running again'
 
 class ScanLogger:
     """ Port scan detector and logger class """
@@ -64,7 +64,8 @@ class ScanLogger:
                   TH_RST_ACK: TCP_REPLY} 
                   
     def __init__(self, timeout, threshold, itf=None, maxsize=8192,
-                 ignore_duplicates=False, logfile='/var/log/pyscanlogd3.log'):
+                 ignore_duplicates=False, logfile='/var/log/pyscanlogd3.log',
+                 daemonize=True):
         self.scans = entry.EntryLog(maxsize)
         self.maxsize = maxsize
         self.long_scans = entry.EntryLog(maxsize)
@@ -82,6 +83,8 @@ class ScanLogger:
         self.threshold_l = self.threshold/2
         # Interface(s) - this is a list
         self.itf = itf
+        # Run as daemon - default true
+        self._daemon = daemonize
         # Log file
         try:
             self.scanlog = open(logfile,'a')
@@ -100,7 +103,7 @@ class ScanLogger:
         # Since entries time out in 60 seconds, max size is equal
         # to maximum such entries possible in 60 sec - assuming
         # a scan occurs at most every 5 seconds, this would be 12.
-        self.recent_scans = timerlist.TimerList(12, 60.0)
+        self.recent_scans = timedlist.TimedList(12, 60.0)
         self.status_report()
         
     def status_report(self):
@@ -114,6 +117,10 @@ class ScanLogger:
             print('duplicate scans will not be logged')
         else:
             print('duplicate scans will be logged')
+        if self._daemon:
+            print('running as daemon, logs wont be visible on console')
+        else:
+            print('running in foreground, scans will be logged to console')
         print(f'config => threshold: {self.threshold}, timeout: {self.timeout}s, bufsize: {self.maxsize}')
             
     def log(self, msg):
@@ -123,8 +130,10 @@ class ScanLogger:
         if self.scanlog:
             self.scanlog.write(line + '\n')
             self.scanlog.flush()
-            
-        print(line, file=sys.stderr)
+
+        if not self._daemon:
+            # Print to console if NOT daemonized
+            print(line, file=sys.stderr)
         
     def log_scan(self, scan):
         """ Log the scan to file and/or console """
@@ -167,8 +176,8 @@ class ScanLogger:
                 line = 'Continuing slow ' + template + ', mean timediff: {time_avg:.2f}s'
 
         # Context dictionary
-        context_dict = locals()
-        context_dict.update(scan.__dict__)
+        context_dict = scan.__dict__
+        context_dict.update(locals())
         msg = line.format(**context_dict)
         self.log(msg)
 
@@ -309,7 +318,7 @@ class ScanLogger:
         # Ignore non-tcp, non-udp packets
         if type(payload) not in (TCP, UDP, SCTP):
             return
-        
+
         src,dst,dport,proto,flags = utils.unpack(ip)
         # For time being, ignore where src = dst
         if src == dst:
@@ -318,7 +327,7 @@ class ScanLogger:
         # hash it
         key = hash(hasher.HostHash(src, dst))
         # Keep dropping old entries
-        self.recent_scans.collect()
+        self.recent_scans.cleanup()
         # print (src, dst, dport, proto, ts, flags)
         
         if key in self.scans:
@@ -404,18 +413,24 @@ class ScanLogger:
             # print(src, dst, dport, flags)
             # print(scan)
             self.scans[key] = scan
-
-    def run(self):
+            
+    def run(self, use_mp=True):
         """ Main entry point """
 
         # Create scan db
         self.dbpath = db.create()
-        
         procs = []
-        for itf in self.itf:
-            p=mp.Process(target=self.loop, args=(itf,))
-            procs.append(p)
 
+        if use_mp:
+            for itf in self.itf:
+                p=mp.Process(target=self.loop, args=(itf,))
+                procs.append(p)
+        else:
+            # Disable mp for code debugging using pdb
+            for itf in self.itf:
+                t=threading.Thread(target=self.loop, args=(itf,))
+                procs.append(t)
+                
         for p in procs:
             p.start()
 
@@ -436,6 +451,7 @@ class ScanLogger:
 
         try:
             print('listening on %s: %s' % (pc.name, pc.filter))
+            if self._daemon: utils.daemonize()
             for ts, pkt in pc:
                 self.process(ts, decode(pkt))
         except KeyboardInterrupt:
@@ -445,6 +461,7 @@ class ScanLogger:
             print('%d packets dropped by kernel' % ndrop)
             
 def main():
+    PIDFILE="/var/run/pyscanlogd3.pid"
     parser = argparse.ArgumentParser(prog='pyscanlogd3', description='pyscanlogd3: Python3 port-scan detection program')
     parser.add_argument('-f', '--logfile',help='File to save logs to',default='/var/log/pyscanlogd3.log')
     parser.add_argument('-l','--level',default='medium', choices=levelParams.keys(),
@@ -452,11 +469,20 @@ def main():
     parser.add_argument('-i','--interface',help='The network interface(s) to listen to', default=[None], nargs='*')
     parser.add_argument('-I','--ignore_duplicates',help='Ignore continued (duplicate) scans',
                         action='store_true', default=False)
+    parser.add_argument('-F','--foreground',help='Run in foreground (default: runs as a daemon)',
+                        action='store_true', default=False)    
     args = parser.parse_args()
     
     timeout, threshold = levelParams[args.level]
+    daemonize = (not args.foreground)
+    # Check if already running
+    pid, flag = utils.is_running(PIDFILE)
+    if flag:
+        sys.exit(ERROR_RUNNING.format(**locals()))
+        
     s=ScanLogger(timeout, threshold, itf=args.interface, maxsize=8192,
-                 ignore_duplicates=args.ignore_duplicates, logfile=args.logfile)
+                 ignore_duplicates=args.ignore_duplicates, logfile=args.logfile,
+                 daemonize=daemonize)
     s.run()
         
 if __name__ == '__main__':
