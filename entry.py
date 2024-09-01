@@ -47,13 +47,10 @@ class EntryLog(dict):
     automatically removes oldest items, for storing port
     scan entry logs """
 
-    # This will work only if the value is an object storing
-    # its key in the 'hash' attribute and links to other
-    # objects usin the 'next' attribute.
-    def __init__(self, maxsz):
+    def __init__(self, maxsize):
         self.oldest = None
         self.last = None
-        self.maxsz = maxsz
+        self.maxsz = maxsize
         super(EntryLog, self).__init__()
 
     def __setitem__(self, key, value):

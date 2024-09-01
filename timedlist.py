@@ -4,16 +4,10 @@ import time
 class TimedList(list):
     """ List class of fixed size with entries that time out automatically """
 
-    def __getattribute__(self, name):
-        if name in ('insert','pop','extend'):
-            # We dont want to support these as they are mutation methods
-            raise NotImplementedError
-        else:
-            return super(TimedList, self).__getattribute__(name)
-        
-    def __init__(self, maxsz, ttl):
+    def __init__(self, maxsize, ttl):
+        """ Initializer with max size and TTL in seconds """
         # Maximum size
-        self.maxsz = maxsz
+        self.maxsz = maxsize
         # Time to live for each entry
         self.ttl = ttl
 
@@ -53,6 +47,13 @@ class TimedList(list):
 
         return len(old)
 
+    def __getattribute__(self, name):
+        if name in ('insert','pop','extend'):
+            # We dont want to support these as they are mutation methods
+            raise NotImplementedError
+        else:
+            return super(TimedList, self).__getattribute__(name)
+            
     def __getitem__(self, index):
         """ Overridden __getitem___ """
         
